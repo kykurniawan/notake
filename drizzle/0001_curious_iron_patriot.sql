@@ -1,0 +1,1 @@
+CREATE INDEX "idx_note_deleted_at" ON "note" USING btree ("deletedAt");

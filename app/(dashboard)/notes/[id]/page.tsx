@@ -180,8 +180,15 @@ export default function NoteDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const latestContentRef = useRef<string | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     async function fetchNote() {
@@ -193,14 +200,21 @@ export default function NoteDetailPage() {
         }
         const data = await res.json();
         setTitle(data.title);
-        if (data.content) {
-          try {
-            setInitialContent(JSON.parse(data.content));
-          } catch {
-            setInitialContent(undefined);
+
+        // Check if note is deleted
+        if (data.deletedAt) {
+          setIsDeleted(true);
+        } else {
+          setIsDeleted(false);
+          if (data.content) {
+            try {
+              setInitialContent(JSON.parse(data.content));
+            } catch {
+              setInitialContent(undefined);
+            }
           }
+          latestContentRef.current = data.content;
         }
-        latestContentRef.current = data.content;
       } catch {
         setNotFound(true);
       } finally {
@@ -247,6 +261,91 @@ export default function NoteDetailPage() {
     debouncedSave({ content: json });
   };
 
+  const handleMoveToTrash = async () => {
+    setShowMenu(false);
+    setDeleting(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/notes/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to delete note");
+      }
+
+      // Show success message briefly before redirecting
+      setSuccessMessage("Note moved to trash");
+      setTimeout(() => {
+        router.push("/notes");
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to delete note:", err);
+      setErrorMessage(err instanceof Error ? err.message : "Failed to delete note");
+      setTimeout(() => setErrorMessage(null), 5000);
+      setDeleting(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/notes/${id}/restore`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to restore note");
+      }
+
+      // Show success message and reload the note
+      setSuccessMessage("Note restored successfully");
+
+      // Reload the note to show it in the editor
+      const noteRes = await fetch(`/api/notes/${id}`);
+      if (noteRes.ok) {
+        const data = await noteRes.json();
+        setTitle(data.title);
+        setIsDeleted(false);
+        if (data.content) {
+          try {
+            setInitialContent(JSON.parse(data.content));
+          } catch {
+            setInitialContent(undefined);
+          }
+        }
+        latestContentRef.current = data.content;
+      }
+
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error("Failed to restore note:", err);
+      setErrorMessage(err instanceof Error ? err.message : "Failed to restore note");
+      setTimeout(() => setErrorMessage(null), 5000);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    if (showMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showMenu]);
+
   // Flush pending save on unmount
   useEffect(() => {
     return () => {
@@ -283,8 +382,168 @@ export default function NoteDetailPage() {
     );
   }
 
+  // Show special UI for deleted notes
+  if (isDeleted) {
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-8">
+        {/* Success Message */}
+        {successMessage && (
+          <div className="mb-4 p-4 rounded-xl bg-green-50 border border-green-200 flex items-center gap-3">
+            <svg
+              className="w-5 h-5 text-green-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+            <span className="text-sm font-medium text-green-800">
+              {successMessage}
+            </span>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3">
+            <svg
+              className="w-5 h-5 text-red-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+            <span className="text-sm font-medium text-red-800">
+              {errorMessage}
+            </span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mb-8">
+          <button
+            onClick={() => router.push("/trash")}
+            className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            Back to Trash
+          </button>
+        </div>
+
+        <div className="text-center py-16">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-100 mb-6">
+            <svg
+              className="w-8 h-8 text-orange-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </div>
+
+          <h2 className="text-2xl font-bold text-zinc-900 mb-3">Note in trash</h2>
+          <p className="text-sm text-zinc-600 mb-2">
+            <span className="font-medium">{title || "Untitled"}</span>
+          </p>
+          <p className="text-sm text-zinc-500 mb-8">
+            This note has been moved to trash. Restore it to continue editing.
+          </p>
+
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={handleRestore}
+              disabled={restoring}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              {restoring ? "Restoring..." : "Restore Note"}
+            </button>
+
+            <button
+              onClick={() => router.push("/trash")}
+              className="px-6 py-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-sm font-semibold rounded-xl transition-colors"
+            >
+              Back to Trash
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto py-12 px-8">
+      {/* Success Message */}
+      {successMessage && (
+        <div className="mb-4 p-4 rounded-xl bg-green-50 border border-green-200 flex items-center gap-3">
+          <svg
+            className="w-5 h-5 text-green-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+          <span className="text-sm font-medium text-green-800">
+            {successMessage}
+          </span>
+        </div>
+      )}
+
+      {/* Error Message */}
+      {errorMessage && (
+        <div className="mb-4 p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3">
+          <svg
+            className="w-5 h-5 text-red-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+          <span className="text-sm font-medium text-red-800">
+            {errorMessage}
+          </span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8">
         <button
           onClick={() => router.push("/notes")}
@@ -295,9 +554,57 @@ export default function NoteDetailPage() {
           </svg>
           All Notes
         </button>
-        <span className="text-xs text-zinc-400">
-          {saving ? "Saving..." : "Saved"}
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-zinc-400">
+            {saving ? "Saving..." : "Saved"}
+          </span>
+          {/* Three-dot menu */}
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              disabled={deleting}
+              className="p-2 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Note options"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="12" cy="5" r="1" />
+                <circle cx="12" cy="19" r="1" />
+              </svg>
+            </button>
+
+            {showMenu && (
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-zinc-200 rounded-lg shadow-lg overflow-hidden z-10">
+                <button
+                  onClick={handleMoveToTrash}
+                  disabled={deleting}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                  {deleting ? "Moving to trash..." : "Move to Trash"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <input

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -50,7 +50,10 @@ export const note = pgTable("note", {
     .references(() => user.id),
   createdAt: timestamp("createdAt").notNull(),
   updatedAt: timestamp("updatedAt").notNull(),
-});
+  deletedAt: timestamp("deletedAt"),
+}, (table) => [
+  index("idx_note_deleted_at").on(table.deletedAt),
+]);
 
 export const verification = pgTable("verification", {
   id: text("id").primaryKey(),

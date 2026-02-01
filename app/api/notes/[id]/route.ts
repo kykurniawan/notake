@@ -63,3 +63,34 @@ export async function PUT(
 
   return Response.json(updated);
 }
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const now = new Date();
+
+  const [updated] = await db
+    .update(note)
+    .set({
+      deletedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(note.id, id), eq(note.userId, session.user.id)))
+    .returning();
+
+  if (!updated) {
+    return Response.json({ error: "Note not found" }, { status: 404 });
+  }
+
+  return Response.json(updated);
+}
